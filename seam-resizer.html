@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seam Resizer</title>
+<style>
+:root{
+  --bg:#f3f2ee;--panel:#ffffff;--ink:#1d1c19;--muted:#6d6b64;--line:#dddbd3;
+  --stage:#e6e4dd;--accent:#d9532b;--accent-ink:#fff;--soft:#f0eee8;
+  --protect:#23a566;--remove:#d9532b;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#131311;--panel:#1c1b18;--ink:#ecebe6;--muted:#9b998f;--line:#32312c;
+        --stage:#0c0c0b;--soft:#26251f}
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  display:grid;grid-template-columns:320px 1fr;height:100vh}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:20px 18px;
+  overflow:auto;display:flex;flex-direction:column;gap:20px}
+h1{font-size:19px;margin:0;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:2px 0 0;font-size:13px}
+section{display:flex;flex-direction:column;gap:10px}
+section>h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0;font-weight:600}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,select{font:inherit;color:var(--ink);background:var(--soft);border:1px solid var(--line);
+  border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--muted)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.on{outline:2px solid var(--ink);outline-offset:-2px}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;flex:1;background:transparent;padding:7px 8px}
+.seg button.on{background:var(--ink);color:var(--panel);outline:0}
+.seg.sides button{font-size:13px}
+label.sl{display:flex;flex-direction:column;gap:4px}
+label.sl .top{display:flex;justify-content:space-between;font-weight:600}
+label.sl .top span{font-weight:400;color:var(--muted);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.chk{display:flex;gap:8px;align-items:center;cursor:pointer}
+.prog{height:4px;background:var(--soft);border-radius:4px;overflow:hidden}
+.prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+.status{font-size:12px;color:var(--muted);min-height:1.2em}
+.hint{font-size:12px;color:var(--muted);margin:0}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.foot{margin-top:auto;font-size:12px;color:var(--muted)}
+.panel{display:flex;flex-direction:column;gap:10px}
+.panel[hidden]{display:none}
+main{position:relative;background:var(--stage);overflow:hidden;display:flex;align-items:center;justify-content:center}
+#stage{position:relative;display:none}
+#view,#paint{position:absolute;left:0;top:0}
+#paint{display:none;cursor:crosshair;touch-action:none}
+#frame{position:absolute;outline:1.5px dashed var(--muted);pointer-events:none;mix-blend-mode:difference}
+#stage.cropping{overflow:hidden}
+/* 3×3 grid: 9 cells with crisp light lines plus a dark halo so they show on any image */
+#grid{position:absolute;left:0;top:0;pointer-events:none;z-index:2;
+  display:none;grid-template:repeat(3,1fr)/repeat(3,1fr)}
+#grid i{border-right:1px solid rgba(255,255,255,.85);border-bottom:1px solid rgba(255,255,255,.85);
+  box-shadow:1px 1px 0 rgba(0,0,0,.45)}
+#grid i:nth-child(3n){border-right:0;box-shadow:0 1px 0 rgba(0,0,0,.45)}
+#grid i:nth-child(n+7){border-bottom:0;box-shadow:1px 0 0 rgba(0,0,0,.45)}
+#grid i:nth-child(9){box-shadow:none}
+#crop{position:absolute;display:none;box-shadow:0 0 0 9999px rgba(0,0,0,.55);outline:1.5px solid #fff;cursor:move;touch-action:none}
+#crop::before,#crop::after{content:"";position:absolute;pointer-events:none}
+#crop::before{left:33.333%;right:33.333%;top:0;bottom:0;border-left:1px solid rgba(255,255,255,.45);border-right:1px solid rgba(255,255,255,.45)}
+#crop::after{top:33.333%;bottom:33.333%;left:0;right:0;border-top:1px solid rgba(255,255,255,.45);border-bottom:1px solid rgba(255,255,255,.45)}
+#crop .hd{position:absolute;width:14px;height:14px;background:#fff;border:1px solid #222;border-radius:3px;z-index:1}
+#crop .hd[data-h=nw]{left:-2px;top:-2px;cursor:nwse-resize}
+#crop .hd[data-h=ne]{right:-2px;top:-2px;cursor:nesw-resize}
+#crop .hd[data-h=sw]{left:-2px;bottom:-2px;cursor:nesw-resize}
+#crop .hd[data-h=se]{right:-2px;bottom:-2px;cursor:nwse-resize}
+#crop .hd[data-h=n],#crop .hd[data-h=s]{left:50%;width:26px;height:8px;margin-left:-13px;cursor:ns-resize}
+#crop .hd[data-h=n]{top:-2px}#crop .hd[data-h=s]{bottom:-2px}
+#crop .hd[data-h=e],#crop .hd[data-h=w]{top:50%;width:8px;height:26px;margin-top:-13px;cursor:ew-resize}
+#crop .hd[data-h=e]{right:-2px}#crop .hd[data-h=w]{left:-2px}
+#crop.locked .hd[data-h=n],#crop.locked .hd[data-h=s],#crop.locked .hd[data-h=e],#crop.locked .hd[data-h=w]{display:none}
+.ratios{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.ratios button{padding:6px 4px;font-size:13px}
+.ratios button.on{background:var(--ink);color:var(--panel);outline:0}
+.nums{display:flex;gap:8px;align-items:center}
+.nums input{width:100%;font:inherit;color:var(--ink);background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+#badge{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--panel);
+  border:1px solid var(--line);border-radius:999px;padding:5px 14px;font-size:13px;
+  font-variant-numeric:tabular-nums;display:none;white-space:nowrap}
+#empty{text-align:center;padding:40px;border:2px dashed var(--line);border-radius:16px;max-width:420px;margin:20px}
+#empty p{color:var(--muted)}
+main.drag #empty{border-color:var(--accent)}
+@media (max-width:760px){
+  body{grid-template-columns:1fr;grid-template-rows:auto minmax(60vh,1fr);height:auto;min-height:100vh}
+  aside{border-right:0;border-bottom:1px solid var(--line);padding:16px}
+}
+</style>
+</head>
+<body>
+<aside>
+  <div>
+    <h1>Seam Resizer</h1>
+    <p class="sub">Content-aware resizing you can drag, live.</p>
+  </div>
+
+  <section>
+    <h2>Image</h2>
+    <div class="row">
+      <button id="openBtn" class="primary">Open image…</button>
+      <button id="sampleBtn">Try a sample</button>
+      <input id="file" type="file" accept="image/*" hidden>
+    </div>
+    <label class="sl">
+      <div class="top">Working size</div>
+      <select id="quality">
+        <option value="600">Fast: up to 600 px</option>
+        <option value="900" selected>Balanced: up to 900 px</option>
+        <option value="1400">Detailed: up to 1400 px (slower)</option>
+        <option value="2400">Large: up to 2400 px (very slow)</option>
+      </select>
+    </label>
+  </section>
+
+  <section>
+    <h2>Size</h2>
+    <div class="seg" id="modeSeg">
+      <button data-m="resize" class="on">Resize</button>
+      <button data-m="extend">Extend side</button>
+      <button data-m="crop">Crop</button>
+    </div>
+
+    <div class="panel" id="resizePanel">
+      <label class="sl"><div class="top">Width <span id="wVal">–</span></div>
+        <input id="wS" type="range" disabled></label>
+      <div class="prog" title="Width analysis"><i id="wProg"></i></div>
+      <label class="sl"><div class="top">Height <span id="hVal">–</span></div>
+        <input id="hS" type="range" disabled></label>
+      <div class="prog" title="Height analysis"><i id="hProg"></i></div>
+      <label class="chk"><input type="checkbox" id="lockChk"> Lock proportions</label>
+      <p class="hint">Drag left to shrink, right to enlarge (up to 180%). Enlarging stretches the plain areas and leaves the objects as they are.</p>
+      <div class="row">
+        <button id="resetBtn" disabled>Reset size</button>
+        <button id="animBtn" disabled>▶ Animate width</button>
+      </div>
+    </div>
+
+    <div class="panel" id="extendPanel" hidden>
+      <div class="seg sides" id="sideSeg">
+        <button data-s="left">← Left</button>
+        <button data-s="right" class="on">Right →</button>
+        <button data-s="top">↑ Top</button>
+        <button data-s="bottom">Bottom ↓</button>
+      </div>
+      <label class="sl"><div class="top">Add <span id="eVal">0 px</span></div>
+        <input id="eS" type="range" min="0" max="1" value="0"></label>
+      <div class="prog" title="Edge analysis"><i id="eProg"></i></div>
+      <label class="sl"><div class="top">Fill from the outer <span id="bandVal">35%</span></div>
+        <input id="bandS" type="range" min="10" max="60" value="35"></label>
+      <p class="hint">Grows the image on one side only. It stretches the plain parts near that edge, and everything else stays exactly where it was. A bigger fill area lets you add more.</p>
+    </div>
+
+    <div class="panel" id="cropPanel" hidden>
+      <div class="ratios" id="ratioGrid">
+        <button data-r="free" class="on">Free</button>
+        <button data-r="orig">Original</button>
+        <button data-r="1">1:1</button>
+        <button data-r="0.8">4:5</button>
+        <button data-r="1.3333">4:3</button>
+        <button data-r="1.5">3:2</button>
+        <button data-r="1.7778">16:9</button>
+        <button data-r="0.5625">9:16</button>
+      </div>
+      <div class="nums">
+        <input id="cW" type="number" min="8" aria-label="Crop width"> <span>×</span>
+        <input id="cH" type="number" min="8" aria-label="Crop height"> <span>px</span>
+      </div>
+      <p class="hint">Drag the box to move it, drag the handles to resize it, or drag anywhere outside the box to draw a new one. Any resize or extend you haven't kept yet is kept automatically when you open Crop.</p>
+      <div class="row">
+        <button id="cropApply" class="primary">Apply crop</button>
+        <button id="cropReset">Select all</button>
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+    <button id="applyBtn" disabled title="Make the current result the new starting image, so you can resize or extend it again">Keep result &amp; continue editing</button>
+  </section>
+
+  <section>
+    <h2>View</h2>
+    <div class="seg" id="viewSeg">
+      <button data-v="seam" class="on">Seam carved</button>
+      <button data-v="normal">Normal resize</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="seamChk"> Highlight seams (removed next / added)</label>
+    <label class="chk"><input type="checkbox" id="gridChk"> Show 3×3 grid</label>
+    <label class="chk"><input type="checkbox" id="marksChk" checked> Show my marks on the result</label>
+  </section>
+
+  <section>
+    <h2>Mark areas</h2>
+    <div class="row">
+      <button data-tool="protect" disabled><span class="dot" style="background:var(--protect)"></span>Protect</button>
+      <button data-tool="remove" disabled><span class="dot" style="background:var(--remove)"></span>Remove</button>
+      <button data-tool="erase" disabled>Erase</button>
+    </div>
+    <label class="sl"><div class="top">Brush <span id="bVal">30 px</span></div>
+      <input id="brush" type="range" min="6" max="120" value="30"></label>
+    <div class="row">
+      <button id="doneBtn" class="primary" style="display:none">Done marking</button>
+      <button id="clearBtn" disabled>Clear marks</button>
+    </div>
+    <p class="hint">Paint over things that must keep their shape (Protect) or that you want removed first (Remove), then click Done.</p>
+  </section>
+
+  <section>
+    <button id="dlBtn" class="primary" disabled>Download PNG</button>
+  </section>
+
+  <p class="foot">Everything runs in your browser, nothing is uploaded. It uses the same seam-carving idea as Caire. The PNG is saved at the working size; for full-resolution output, use the <code>caire</code> command.</p>
+</aside>
+
+<main id="main">
+  <div id="empty">
+    <h2 style="margin:0 0 6px">Drop an image here</h2>
+    <p>or use <b>Open image…</b>, paste with Ctrl+V, or click <b>Try a sample</b>.</p>
+  </div>
+  <div id="stage"><canvas id="view"></canvas><canvas id="paint"></canvas><div id="grid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div id="frame"></div><div id="crop"><i class="hd" data-h="nw"></i><i class="hd" data-h="n"></i><i class="hd" data-h="ne"></i><i class="hd" data-h="e"></i><i class="hd" data-h="se"></i><i class="hd" data-h="s"></i><i class="hd" data-h="sw"></i><i class="hd" data-h="w"></i></div></div>
+  <div id="badge"></div>
+</main>
+
+<script>
+/* ---------- Worker: computes the order in which vertical seams are removed ---------- */
+function workerMain(){
+  self.onmessage = e => {
+    const {w, h, data, mask, maxSeams} = e.data;
+    const N = w*h; let W = w;
+    const lum = new Float32Array(N), idx = new Int32Array(N), mk = new Float32Array(N);
+    for (let i=0, j=0; i<N; i++, j+=4){
+      lum[i] = 0.299*data[j] + 0.587*data[j+1] + 0.114*data[j+2];
+      idx[i] = i;
+      mk[i] = mask ? (mask[i] > 0 ? 1e5 : mask[i] < 0 ? -1e5 : 0) : 0;
+    }
+    const order = new Int32Array(N).fill(2147483647);
+    const en = new Float32Array(N), M = new Float32Array(N), seam = new Int32Array(h);
+    const step = Math.max(4, (maxSeams/40)|0);
+    let lastSent = 0;
+    if (maxSeams <= 0){ self.postMessage({done:0, order}); return; }
+    for (let k=0; k<maxSeams; k++){
+      for (let y=0; y<h; y++){
+        const r = y*W, ru = (y>0?y-1:y)*W, rd = (y<h-1?y+1:y)*W;
+        for (let x=0; x<W; x++){
+          const xl = x>0?x-1:x, xr = x<W-1?x+1:x;
+          en[r+x] = Math.abs(lum[r+xr]-lum[r+xl]) + Math.abs(lum[rd+x]-lum[ru+x]) + mk[r+x];
+        }
+      }
+      for (let x=0; x<W; x++) M[x] = en[x];
+      for (let y=1; y<h; y++){
+        const r = y*W, p = r-W;
+        for (let x=0; x<W; x++){
+          let m = M[p+x];
+          if (x>0 && M[p+x-1] < m) m = M[p+x-1];
+          if (x<W-1 && M[p+x+1] < m) m = M[p+x+1];
+          M[r+x] = en[r+x] + m;
+        }
+      }
+      const last = (h-1)*W; let bx = 0, bv = M[last];
+      for (let x=1; x<W; x++) if (M[last+x] < bv){ bv = M[last+x]; bx = x; }
+      seam[h-1] = bx;
+      for (let y=h-2; y>=0; y--){
+        const p = y*W, x = seam[y+1]; let nx = x, v = M[p+x];
+        if (x>0 && M[p+x-1] < v){ v = M[p+x-1]; nx = x-1; }
+        if (x<W-1 && M[p+x+1] < v){ v = M[p+x+1]; nx = x+1; }
+        seam[y] = nx;
+      }
+      let o = 0;
+      for (let y=0; y<h; y++){
+        const r = y*W, s = seam[y];
+        order[idx[r+s]] = k;
+        for (let x=0; x<W; x++){
+          if (x === s) continue;
+          const i = r+x; lum[o] = lum[i]; idx[o] = idx[i]; mk[o] = mk[i]; o++;
+        }
+      }
+      W--;
+      const done = k+1;
+      if (done-lastSent >= step || done === maxSeams){
+        lastSent = done;
+        self.postMessage({done, order: order.slice()});
+      }
+    }
+  };
+}
+const workerURL = URL.createObjectURL(new Blob(['(' + workerMain.toString() + ')()'], {type:'text/javascript'}));
+
+/* ---------- Image helpers ---------- */
+const SPAN = 12; // how many upcoming seams to highlight when shrinking
+/* k > 0 removes k seams, k < 0 inserts -k seams (duplicates the k cheapest seams). */
+function carveV(src, order, k, hl){
+  if (!order || (k === 0 && !hl)) return src;
+  const w = src.w, h = src.h, N = w*h, d = src.data, m = src.mask;
+  if (k >= 0){
+    const nw = w-k;
+    const out = new Uint8ClampedArray(nw*h*4), om = m ? new Int8Array(nw*h) : null;
+    const hiEnd = k + (hl ? SPAN : 0); let o = 0;
+    for (let i=0; i<N; i++){
+      const r = order[i];
+      if (r >= k){
+        const j = i<<2, q = o<<2;
+        if (r < hiEnd){ out[q]=255; out[q+1]=40; out[q+2]=70; }
+        else { out[q]=d[j]; out[q+1]=d[j+1]; out[q+2]=d[j+2]; }
+        out[q+3] = d[j+3];
+        if (om) om[o] = m[i];
+        o++;
+      }
+    }
+    return {w:nw, h, data:out, mask:om};
+  }
+  const K = -k, nw = w+K;
+  const out = new Uint8ClampedArray(nw*h*4), om = m ? new Int8Array(nw*h) : null;
+  let o = 0;
+  for (let y=0; y<h; y++){
+    const r = y*w;
+    for (let x=0; x<w; x++){
+      const i = r+x, j = i<<2; let q = o<<2;
+      out[q]=d[j]; out[q+1]=d[j+1]; out[q+2]=d[j+2]; out[q+3]=d[j+3];
+      if (om) om[o] = m[i];
+      o++;
+      if (order[i] < K){
+        const n = (x < w-1 ? i+1 : i) << 2; q = o<<2;
+        if (hl){ out[q]=255; out[q+1]=40; out[q+2]=70; }
+        else { out[q]=(d[j]+d[n])>>1; out[q+1]=(d[j+1]+d[n+1])>>1; out[q+2]=(d[j+2]+d[n+2])>>1; }
+        out[q+3] = (d[j+3]+d[n+3])>>1;
+        if (om) om[o] = m[i];
+        o++;
+      }
+    }
+  }
+  return {w:nw, h, data:out, mask:om};
+}
+function transpose(img){
+  const {w, h, data, mask} = img;
+  const out = new Uint8ClampedArray(w*h*4), om = mask ? new Int8Array(w*h) : null;
+  for (let y=0; y<h; y++) for (let x=0; x<w; x++){
+    const i = y*w+x, t = x*h+y, j = i<<2, q = t<<2;
+    out[q]=data[j]; out[q+1]=data[j+1]; out[q+2]=data[j+2]; out[q+3]=data[j+3];
+    if (om) om[t] = mask[i];
+  }
+  return {w:h, h:w, data:out, mask:om};
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ---------- State ---------- */
+const $ = s => document.querySelector(s);
+const wS = $('#wS'), hS = $('#hS'), eS = $('#eS'), bandS = $('#bandS');
+const view = $('#view'), paint = $('#paint'), stage = $('#stage'), frame = $('#frame'), grid = $('#grid');
+const vctx = view.getContext('2d'), pctx = paint.getContext('2d');
+const S = {
+  src:null, name:'image', orig:null, mask:null, maskDirty:false, mode:'resize',
+  wOrder:null, wDone:0, wMax:0, wCache:null,
+  hSrc:null, hOrder:null, hDone:0, hMax:0, hBaseK:-1, hPendingK:null,
+  side:'right', band:35, E:null, crop:null, ratio:null, showGrid:false, showMarks:true,
+  view:'seam', showSeams:false, last:'w', tool:null, brush:30, fit:1, anim:null
+};
+let wWorker = null, hWorker = null, eWorker = null, hTimer = null;
+
+/* Scales a marks layer {data,w,h} to a new size (nearest pixel). Returns null if there are no marks. */
+function resampleMask(m, nw, nh){
+  if (!m || !m.data) return null;
+  const out = new Int8Array(nw*nh); let any = false;
+  for (let y=0; y<nh; y++){
+    const sy = Math.min(m.h-1, Math.floor(y * m.h / nh)) * m.w;
+    for (let x=0; x<nw; x++){
+      const v = m.data[sy + Math.min(m.w-1, Math.floor(x * m.w / nw))];
+      if (v){ out[y*nw+x] = v; any = true; }
+    }
+  }
+  return any ? out : null;
+}
+function currentMarks(){ return S.mask ? {data:S.mask, w:S.orig.w, h:S.orig.h} : null; }
+
+function setImage(src, name, noCap, marks){
+  stopAnim();
+  S.src = src; S.name = name || 'image';
+  const max = +$('#quality').value;
+  const s = noCap ? 1 : Math.min(1, max/Math.max(src.width, src.height));
+  const w = Math.max(8, Math.round(src.width*s)), h = Math.max(8, Math.round(src.height*s));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, w, h);
+  S.origCanvas = c;
+  S.mask = resampleMask(marks, w, h);
+  S.orig = {w, h, data:x.getImageData(0,0,w,h).data, mask:S.mask};
+  S.wMax = Math.floor(w*0.8); S.hMax = Math.floor(h*0.8);
+  wS.min = w - S.wMax; wS.max = w + S.wMax; wS.value = w;
+  hS.min = h - S.hMax; hS.max = h + S.hMax; hS.value = h;
+  eS.value = 0;
+  S.crop = {x:0, y:0, w, h};
+  if (S.ratio) setRatio(S.ratio, true);
+  document.querySelectorAll('aside button:disabled, aside input:disabled').forEach(b => b.disabled = false);
+  $('#empty').style.display = 'none'; stage.style.display = 'block'; $('#badge').style.display = 'block';
+  setTool(null, true);
+  recomputeAll();
+}
+
+function recomputeAll(){
+  S.orig.mask = S.mask;
+  startWidth();
+  S.E = null; if (eWorker){ eWorker.terminate(); eWorker = null; }
+  if (S.mode === 'extend') startExtend();
+  render();
+}
+
+function startWidth(){
+  if (wWorker) wWorker.terminate();
+  if (hWorker){ hWorker.terminate(); hWorker = null; }
+  clearTimeout(hTimer);
+  const o = S.orig;
+  S.wDone = 0; S.wOrder = null; S.wCache = null;
+  S.hOrder = null; S.hDone = 0; S.hBaseK = -1; S.hPendingK = null;
+  wWorker = new Worker(workerURL);
+  wWorker.onmessage = e => { S.wDone = e.data.done; S.wOrder = e.data.order; S.wCache = null; render(); };
+  wWorker.postMessage({w:o.w, h:o.h, data:o.data, mask:S.mask, maxSeams:S.wMax});
+}
+
+function scheduleHeight(kW){
+  if (S.hPendingK === kW) return;
+  S.hPendingK = kW;
+  clearTimeout(hTimer);
+  hTimer = setTimeout(() => startHeight(kW), S.last === 'h' ? 0 : 250);
+}
+function startHeight(kW){
+  if (hWorker) hWorker.terminate();
+  const base = widthImg(kW);
+  S.hSrc = transpose(base); S.hOrder = null; S.hDone = 0; S.hBaseK = -1;
+  hWorker = new Worker(workerURL);
+  hWorker.onmessage = e => { S.hOrder = e.data.order; S.hDone = e.data.done; S.hBaseK = kW; render(); };
+  hWorker.postMessage({w:S.hSrc.w, h:S.hSrc.h, data:S.hSrc.data, mask:S.hSrc.mask, maxSeams:S.hMax});
+}
+
+function widthImg(kW){
+  if (S.wCache && S.wCache.k === kW) return S.wCache.img;
+  const img = kW !== 0 ? carveV(S.orig, S.wOrder, kW, false) : S.orig;
+  S.wCache = {k:kW, img};
+  return img;
+}
+
+/* Extend one side: seams are only allowed in a band next to the chosen edge, so the rest never moves. */
+function startExtend(){
+  if (eWorker) eWorker.terminate();
+  const o = S.orig, side = S.side, vert = side === 'left' || side === 'right';
+  const src = vert ? o : transpose(o);              // top → left, bottom → right after transpose
+  const atStart = side === 'left' || side === 'top';
+  const bandPx = Math.max(3, Math.round(src.w * S.band / 100));
+  const mask = new Int8Array(src.w*src.h);
+  for (let y=0; y<src.h; y++) for (let x=0; x<src.w; x++){
+    const i = y*src.w + x, inBand = atStart ? x < bandPx : x >= src.w - bandPx;
+    mask[i] = inBand ? (src.mask && src.mask[i] > 0 ? 1 : 0) : 1;
+  }
+  const E = S.E = {side, vert, atStart, src, order:null, done:0, max:Math.max(1, Math.floor(bandPx*0.6))};
+  eS.max = E.max; if (+eS.value > E.max) eS.value = E.max;
+  eWorker = new Worker(workerURL);
+  eWorker.onmessage = e => { if (S.E !== E) return; E.done = e.data.done; E.order = e.data.order; render(); };
+  eWorker.postMessage({w:src.w, h:src.h, data:src.data, mask, maxSeams:E.max});
+}
+
+/* Builds the image to show. withHL = draw seams in red. Returns image + where the original sits inside it. */
+function compute(withHL){
+  const o = S.orig;
+  if (S.mode === 'crop'){
+    const c = S.crop, out = new Uint8ClampedArray(c.w*c.h*4), om = S.mask ? new Int8Array(c.w*c.h) : null;
+    for (let y=0; y<c.h; y++){
+      const r = (c.y+y)*o.w + c.x, s = r*4;
+      out.set(o.data.subarray(s, s + c.w*4), y*c.w*4);
+      if (om) om.set(S.mask.subarray(r, r + c.w), y*c.w);
+    }
+    return {img:{w:c.w, h:c.h, data:out, mask:om}, offX:0, offY:0, note:''};
+  }
+  if (S.mode === 'extend'){
+    const E = S.E;
+    if (!E) return {img:o, offX:0, offY:0, note:'Analyzing the edge…'};
+    const want = +eS.value, k = Math.min(want, E.done);
+    let img = carveV(E.src, E.order, -k, withHL && S.showSeams);
+    if (!E.vert) img = transpose(img);
+    const offX = E.side === 'left' ? k : 0, offY = E.side === 'top' ? k : 0;
+    const note = want > k ? 'Still analyzing the edge. The slider will catch up.' : '';
+    return {img, offX, offY, note};
+  }
+  const kW = clamp(o.w - +wS.value, -S.wDone, S.wDone);
+  const wantH = o.h - +hS.value;
+  const base = widthImg(kW);
+  const hFresh = S.hBaseK === kW && S.hOrder;
+  let img, note = '';
+  if (wantH !== 0 && !hFresh){ scheduleHeight(kW); note = 'Recalculating height for the new width…'; }
+  if (wantH !== 0 && hFresh){
+    const kH = clamp(wantH, -S.hDone, S.hDone);
+    if (kH !== wantH) note = 'Still analyzing height. The slider will catch up.';
+    const hl = withHL && S.showSeams && (S.last === 'h' || kH < 0);
+    img = transpose(carveV(S.hSrc, S.hOrder, kH, hl));
+  } else if (withHL && S.showSeams && S.wOrder){
+    img = carveV(o, S.wOrder, kW, true);
+  } else img = base;
+  if (Math.abs(o.w - +wS.value) > S.wDone) note = 'Still analyzing width. The slider will catch up.';
+  return {img, offX:0, offY:0, note};
+}
+
+function layout(outW, outH, offX, offY){
+  const m = $('#main'), o = S.orig;
+  const bw = Math.max(outW, o.w + offX), bh = Math.max(outH, o.h + offY);
+  S.fit = Math.min((m.clientWidth-56)/bw, (m.clientHeight-100)/bh, 2);
+  if (!(S.fit > 0)) S.fit = 1;
+  const f = S.fit;
+  stage.style.width = bw*f + 'px'; stage.style.height = bh*f + 'px';
+  view.style.width = outW*f + 'px'; view.style.height = outH*f + 'px';
+  Object.assign(grid.style, {width:outW*f+'px', height:outH*f+'px', display:S.showGrid ? 'grid' : 'none'});
+  Object.assign(frame.style, {left:offX*f+'px', top:offY*f+'px', width:o.w*f+'px', height:o.h*f+'px'});
+  paint.style.width = o.w*f + 'px'; paint.style.height = o.h*f + 'px';
+}
+
+function render(){
+  if (!S.orig) return;
+  const o = S.orig;
+  let img, offX = 0, offY = 0, note = '';
+  const cropping = S.mode === 'crop' && !S.tool;
+  stage.classList.toggle('cropping', cropping);
+  cropEl.style.display = cropping ? 'block' : 'none';
+  frame.style.display = S.mode === 'crop' ? 'none' : '';
+  if (S.tool){
+    img = o; note = 'Marking: paint on the image, then click Done marking.';
+  } else if (S.mode === 'crop'){
+    img = o;
+    note = S.crop.w === o.w && S.crop.h === o.h ? 'Drag on the image to choose the area to keep.' : 'Click Apply crop to keep this area.';
+  } else if (S.view === 'normal'){
+    const r = compute(false), tw = r.img.w, th = r.img.h;
+    view.width = tw; view.height = th;
+    vctx.imageSmoothingQuality = 'high';
+    vctx.drawImage(S.origCanvas, 0, 0, tw, th);
+    layout(tw, th, 0, 0);
+    updateLabels(tw, th, 'Normal resize: the whole picture is stretched or squashed.');
+    return;
+  } else {
+    const r = compute(true); img = r.img; offX = r.offX; offY = r.offY; note = r.note;
+  }
+  view.width = img.w; view.height = img.h;
+  let px = img.data;
+  if (S.showMarks && img.mask && !S.tool){
+    // tint marked areas so you can see your marks follow the image
+    px = new Uint8ClampedArray(img.data); const m = img.mask;
+    for (let i=0; i<m.length; i++){
+      const v = m[i]; if (!v) continue;
+      const q = i<<2, [r, g, b] = v > 0 ? [35, 165, 102] : [217, 83, 43];
+      px[q] = px[q]*.55 + r*.45; px[q+1] = px[q+1]*.55 + g*.45; px[q+2] = px[q+2]*.55 + b*.45;
+    }
+  }
+  vctx.putImageData(new ImageData(px, img.w, img.h), 0, 0);
+  layout(img.w, img.h, offX, offY);
+  if (S.mode === 'crop'){ placeCrop(); updateLabels(S.crop.w, S.crop.h, note); }
+  else updateLabels(img.w, img.h, note);
+}
+function pctLabel(v, base){ return `${v} px · ${Math.round(v/base*100)}%`; }
+function updateLabels(w, h, note){
+  const o = S.orig;
+  $('#wVal').textContent = pctLabel(+wS.value, o.w);
+  $('#hVal').textContent = pctLabel(+hS.value, o.h);
+  $('#eVal').textContent = `${+eS.value} px`;
+  $('#bandVal').textContent = S.band + '%';
+  $('#badge').textContent = `${o.w} × ${o.h}  →  ${w} × ${h}`;
+  $('#wProg').style.width = (S.wMax ? S.wDone/S.wMax*100 : 0) + '%';
+  $('#hProg').style.width = (S.hMax && S.hOrder ? S.hDone/S.hMax*100 : 0) + '%';
+  $('#eProg').style.width = (S.E && S.E.max ? S.E.done/S.E.max*100 : 0) + '%';
+  let st = note;
+  if (S.mode === 'crop') $('#badge').textContent = `${o.w} × ${o.h}  →  crop ${w} × ${h}`;
+  if (!st){
+    if (S.mode === 'extend') st = S.E && S.E.done < S.E.max ? `Analyzing the edge… ${Math.round(S.E.done/S.E.max*100)}%` : 'Ready. Drag “Add”.';
+    else st = S.wDone < S.wMax ? `Analyzing width… ${Math.round(S.wDone/S.wMax*100)}%` : 'Ready. Drag the sliders.';
+  }
+  $('#status').textContent = st;
+  $('#animBtn').disabled = S.wDone < S.wMax || !!S.tool;
+}
+
+/* ---------- Controls ---------- */
+wS.addEventListener('input', () => {
+  stopAnim(); S.last = 'w';
+  if ($('#lockChk').checked) hS.value = Math.round(S.orig.h * +wS.value / S.orig.w);
+  render();
+});
+hS.addEventListener('input', () => {
+  stopAnim();
+  if ($('#lockChk').checked){ S.last = 'w'; wS.value = Math.round(S.orig.w * +hS.value / S.orig.h); }
+  else S.last = 'h';
+  render();
+});
+$('#lockChk').onchange = e => { if (e.target.checked && S.orig){ hS.value = Math.round(S.orig.h * +wS.value / S.orig.w); render(); } };
+eS.addEventListener('input', render);
+bandS.addEventListener('input', () => { S.band = +bandS.value; updateLabels(view.width, view.height, 'Release to re-analyze…'); });
+bandS.addEventListener('change', () => { if (S.orig) { startExtend(); render(); } });
+$('#modeSeg').onclick = e => {
+  const b = e.target.closest('button'); if (!b || b.dataset.m === S.mode) return;
+  stopAnim();
+  if (S.tool) setTool(null);
+  const next = b.dataset.m;
+  // Opening Crop keeps any unsaved resize/extend first, so you crop what you see.
+  if (next === 'crop' && S.orig && hasPendingChange()) keepResult();
+  S.mode = next;
+  document.querySelectorAll('#modeSeg button').forEach(x => x.classList.toggle('on', x === b));
+  $('#resizePanel').hidden = S.mode !== 'resize';
+  $('#extendPanel').hidden = S.mode !== 'extend';
+  $('#cropPanel').hidden = S.mode !== 'crop';
+  $('#applyBtn').hidden = S.mode === 'crop';
+  if (S.orig && S.mode === 'extend' && !S.E) startExtend();
+  render();
+};
+function hasPendingChange(){
+  const o = S.orig;
+  if (S.mode === 'resize') return +wS.value !== o.w || +hS.value !== o.h;
+  if (S.mode === 'extend') return +eS.value > 0;
+  return false;
+}
+$('#sideSeg').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.side = b.dataset.s;
+  document.querySelectorAll('#sideSeg button').forEach(x => x.classList.toggle('on', x === b));
+  if (S.orig){ startExtend(); render(); }
+};
+$('#resetBtn').onclick = () => { stopAnim(); wS.value = S.orig.w; hS.value = S.orig.h; render(); };
+$('#seamChk').onchange = e => { S.showSeams = e.target.checked; render(); };
+$('#gridChk').onchange = e => { S.showGrid = e.target.checked; render(); };
+$('#marksChk').onchange = e => { S.showMarks = e.target.checked; render(); };
+$('#viewSeg').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.view = b.dataset.v;
+  document.querySelectorAll('#viewSeg button').forEach(x => x.classList.toggle('on', x === b));
+  render();
+};
+$('#animBtn').onclick = () => {
+  if (S.anim){ stopAnim(); return; }
+  const lo = +wS.min, hi = +wS.max, dur = 6000, t0 = performance.now();
+  S.last = 'w'; $('#animBtn').textContent = '■ Stop';
+  const tick = t => {
+    const p = ((t - t0) % dur) / dur, f = 0.5 - 0.5*Math.cos(p*2*Math.PI); // 0→1→0
+    wS.value = Math.round(lo + (hi-lo) * (0.5 + 0.5*Math.sin(p*2*Math.PI)) * 1);
+    if ($('#lockChk').checked) hS.value = Math.round(S.orig.h * +wS.value / S.orig.w);
+    render();
+    S.anim = requestAnimationFrame(tick);
+  };
+  S.anim = requestAnimationFrame(tick);
+};
+function stopAnim(){
+  if (S.anim){ cancelAnimationFrame(S.anim); S.anim = null; }
+  $('#animBtn').textContent = '▶ Animate width';
+}
+function keepResult(){
+  const {img} = compute(false);
+  const c = document.createElement('canvas'); c.width = img.w; c.height = img.h;
+  c.getContext('2d').putImageData(new ImageData(img.data, img.w, img.h), 0, 0);
+  setImage(c, S.name.replace(/-edited$/, '') + '-edited', true, img.mask ? {data:img.mask, w:img.w, h:img.h} : null);
+}
+$('#applyBtn').onclick = keepResult;
+
+/* ---------- Crop ---------- */
+const cropEl = $('#crop');
+function placeCrop(){
+  const c = S.crop, f = S.fit;
+  Object.assign(cropEl.style, {left:c.x*f+'px', top:c.y*f+'px', width:c.w*f+'px', height:c.h*f+'px'});
+  cropEl.classList.toggle('locked', !!S.ratio);
+  if (document.activeElement !== $('#cW')) $('#cW').value = c.w;
+  if (document.activeElement !== $('#cH')) $('#cH').value = c.h;
+}
+function setCrop(x, y, w, h){
+  const o = S.orig;
+  w = clamp(Math.round(w), 8, o.w); h = clamp(Math.round(h), 8, o.h);
+  x = clamp(Math.round(x), 0, o.w - w); y = clamp(Math.round(y), 0, o.h - h);
+  S.crop = {x, y, w, h};
+}
+/* Largest box with ratio r that fits, centred on the current box. */
+function setRatio(r, quiet){
+  S.ratio = r;
+  if (!r || !S.orig) return;
+  const o = S.orig, c = S.crop;
+  let w = o.w, h = w / r; if (h > o.h){ h = o.h; w = h * r; }
+  setCrop(c.x + c.w/2 - w/2, c.y + c.h/2 - h/2, w, h);
+  if (!quiet) render();
+}
+$('#ratioGrid').onclick = e => {
+  const b = e.target.closest('button'); if (!b || !S.orig) return;
+  document.querySelectorAll('#ratioGrid button').forEach(x => x.classList.toggle('on', x === b));
+  const v = b.dataset.r;
+  if (v === 'free'){ S.ratio = null; render(); }
+  else setRatio(v === 'orig' ? S.orig.w / S.orig.h : +v);
+};
+function sizeInput(which){
+  if (!S.orig) return;
+  const c = S.crop; let w = +$('#cW').value || c.w, h = +$('#cH').value || c.h;
+  if (S.ratio){ if (which === 'w') h = w / S.ratio; else w = h * S.ratio; }
+  if (S.ratio && (w > S.orig.w || h > S.orig.h)){ const s = Math.min(S.orig.w / w, S.orig.h / h); w *= s; h *= s; }
+  setCrop(c.x + c.w/2 - w/2, c.y + c.h/2 - h/2, w, h);
+  render();
+}
+$('#cW').addEventListener('change', () => sizeInput('w'));
+$('#cH').addEventListener('change', () => sizeInput('h'));
+$('#cropReset').onclick = () => {
+  if (!S.orig) return;
+  document.querySelectorAll('#ratioGrid button').forEach(x => x.classList.toggle('on', x.dataset.r === 'free'));
+  S.ratio = null; setCrop(0, 0, S.orig.w, S.orig.h); render();
+};
+$('#cropApply').onclick = () => {
+  const o = S.orig, c = S.crop;
+  if (c.w === o.w && c.h === o.h) return;
+  keepResult();
+};
+
+let cdrag = null;
+function stagePt(e){
+  const b = view.getBoundingClientRect(), o = S.orig;
+  return [clamp((e.clientX - b.left) / S.fit, 0, o.w), clamp((e.clientY - b.top) / S.fit, 0, o.h)];
+}
+stage.addEventListener('pointerdown', e => {
+  if (S.mode !== 'crop' || S.tool || !S.orig) return;
+  e.preventDefault();
+  const p = stagePt(e), c = {...S.crop}, h = e.target.dataset && e.target.dataset.h;
+  if (h) cdrag = {type:'handle', h, p0:p, c};
+  else if (e.target === cropEl) cdrag = {type:'move', p0:p, c};
+  else cdrag = {type:'new', p0:p, c};
+  stage.setPointerCapture(e.pointerId);
+});
+stage.addEventListener('pointermove', e => {
+  if (!cdrag) return;
+  const o = S.orig, p = stagePt(e), {c, p0} = cdrag, dx = p[0]-p0[0], dy = p[1]-p0[1];
+  if (cdrag.type === 'move'){ setCrop(c.x + dx, c.y + dy, c.w, c.h); render(); return; }
+  const h = cdrag.h || 'se';
+  if (cdrag.type === 'handle' && h.length === 1){
+    // edge handle (free ratio only)
+    let L = c.x, T = c.y, R = c.x + c.w, B = c.y + c.h;
+    if (h === 'w') L = clamp(L + dx, 0, R - 8);
+    if (h === 'e') R = clamp(R + dx, L + 8, o.w);
+    if (h === 'n') T = clamp(T + dy, 0, B - 8);
+    if (h === 's') B = clamp(B + dy, T + 8, o.h);
+    setCrop(L, T, R - L, B - T); render(); return;
+  }
+  // corner handle or drawing a new box: anchor = fixed corner, P = moving corner
+  let A, P;
+  if (cdrag.type === 'new'){ A = p0; P = p; }
+  else {
+    const ax = h.includes('w') ? c.x + c.w : c.x, ay = h.includes('n') ? c.y + c.h : c.y;
+    const px = h.includes('w') ? c.x : c.x + c.w, py = h.includes('n') ? c.y : c.y + c.h;
+    A = [ax, ay]; P = [px + dx, py + dy];
+  }
+  const sx = P[0] >= A[0] ? 1 : -1, sy = P[1] >= A[1] ? 1 : -1;
+  let w = Math.abs(P[0]-A[0]), hh = Math.abs(P[1]-A[1]);
+  const maxW = sx > 0 ? o.w - A[0] : A[0], maxH = sy > 0 ? o.h - A[1] : A[1];
+  if (S.ratio){
+    const r = S.ratio;
+    if (w / Math.max(hh, 1e-6) > r) w = hh * r; else hh = w / r;
+    w = Math.min(w, maxW, maxH * r); hh = w / r;
+  } else { w = Math.min(w, maxW); hh = Math.min(hh, maxH); }
+  if (w < 8 || hh < 8){ if (cdrag.type === 'new') return; w = Math.max(w, 8); hh = Math.max(hh, 8); }
+  setCrop(sx > 0 ? A[0] : A[0] - w, sy > 0 ? A[1] : A[1] - hh, w, hh);
+  render();
+});
+['pointerup','pointercancel'].forEach(t => stage.addEventListener(t, () => cdrag = null));
+window.addEventListener('keydown', e => {
+  if (S.mode === 'crop' && e.key === 'Enter' && !/INPUT|SELECT/.test(document.activeElement.tagName)) $('#cropApply').click();
+});
+window.addEventListener('resize', render);
+
+/* ---------- Marking (protect / remove) ---------- */
+let overlay = null;
+function setTool(tool, silent){
+  const was = S.tool;
+  S.tool = tool;
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === tool));
+  $('#doneBtn').style.display = tool ? '' : 'none';
+  [wS, hS, eS, bandS].forEach(i => i.disabled = !!tool);
+  if (tool){
+    stopAnim();
+    if (!S.mask){ S.mask = new Int8Array(S.orig.w*S.orig.h); }
+    if (!was) buildOverlay();
+    paint.style.display = 'block';
+    render();
+  } else {
+    paint.style.display = 'none';
+    if (!silent && was && S.maskDirty){
+      S.maskDirty = false;
+      if (!S.mask.some(v => v !== 0)) S.mask = null;
+      recomputeAll();
+    } else if (!silent) render();
+  }
+}
+function buildOverlay(){
+  const o = S.orig;
+  paint.width = o.w; paint.height = o.h;
+  overlay = new ImageData(o.w, o.h);
+  for (let i=0; i<S.mask.length; i++) colorMask(i, S.mask[i]);
+  pctx.putImageData(overlay, 0, 0);
+}
+function colorMask(i, v){
+  const q = i<<2, d = overlay.data;
+  if (v > 0){ d[q]=35; d[q+1]=165; d[q+2]=102; d[q+3]=130; }
+  else if (v < 0){ d[q]=217; d[q+1]=83; d[q+2]=43; d[q+3]=140; }
+  else d[q+3] = 0;
+}
+function stamp(cx, cy){
+  const o = S.orig, r = S.brush/2/S.fit, r2 = r*r;
+  const v = S.tool === 'protect' ? 1 : S.tool === 'remove' ? -1 : 0;
+  const x0 = Math.max(0, Math.floor(cx-r)), x1 = Math.min(o.w-1, Math.ceil(cx+r));
+  const y0 = Math.max(0, Math.floor(cy-r)), y1 = Math.min(o.h-1, Math.ceil(cy+r));
+  if (x1 < x0 || y1 < y0) return;
+  for (let y=y0; y<=y1; y++) for (let x=x0; x<=x1; x++){
+    const dx = x-cx, dy = y-cy;
+    if (dx*dx + dy*dy <= r2){ const i = y*o.w+x; if (S.mask[i] !== v){ S.mask[i] = v; colorMask(i, v); S.maskDirty = true; } }
+  }
+  pctx.putImageData(overlay, 0, 0, x0, y0, x1-x0+1, y1-y0+1);
+}
+let lastPt = null;
+function toImg(e){
+  const b = paint.getBoundingClientRect();
+  return [(e.clientX-b.left)/b.width*S.orig.w, (e.clientY-b.top)/b.height*S.orig.h];
+}
+paint.addEventListener('pointerdown', e => { paint.setPointerCapture(e.pointerId); lastPt = toImg(e); stamp(...lastPt); });
+paint.addEventListener('pointermove', e => {
+  if (!lastPt) return;
+  const p = toImg(e), d = Math.hypot(p[0]-lastPt[0], p[1]-lastPt[1]);
+  const step = Math.max(1, S.brush/4/S.fit), n = Math.ceil(d/step);
+  for (let i=1; i<=n; i++) stamp(lastPt[0]+(p[0]-lastPt[0])*i/n, lastPt[1]+(p[1]-lastPt[1])*i/n);
+  lastPt = p;
+});
+['pointerup','pointercancel'].forEach(t => paint.addEventListener(t, () => lastPt = null));
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+$('#doneBtn').onclick = () => setTool(null);
+$('#brush').oninput = e => { S.brush = +e.target.value; $('#bVal').textContent = S.brush + ' px'; };
+$('#clearBtn').onclick = () => {
+  if (!S.mask) return;
+  S.mask.fill(0); S.maskDirty = true;
+  if (S.tool) buildOverlay();
+  else { S.maskDirty = false; S.mask = null; recomputeAll(); }
+};
+
+/* ---------- Loading & saving ---------- */
+$('#openBtn').onclick = () => $('#file').click();
+$('#file').onchange = e => { const f = e.target.files[0]; if (f) loadFile(f); e.target.value = ''; };
+async function loadFile(f){
+  try { const bmp = await createImageBitmap(f); setImage(bmp, f.name.replace(/\.[^.]+$/, '')); }
+  catch { alert('That file could not be opened as an image.'); }
+}
+$('#quality').onchange = () => { if (S.src) setImage(S.src, S.name, false, currentMarks()); };
+const main = $('#main');
+['dragenter','dragover'].forEach(t => main.addEventListener(t, e => { e.preventDefault(); main.classList.add('drag'); }));
+['dragleave','drop'].forEach(t => main.addEventListener(t, e => { e.preventDefault(); main.classList.remove('drag'); }));
+main.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+window.addEventListener('paste', e => {
+  const it = [...e.clipboardData.items].find(i => i.type.startsWith('image/'));
+  if (it) loadFile(it.getAsFile());
+});
+$('#dlBtn').onclick = () => {
+  let c = document.createElement('canvas');
+  if (S.view === 'normal'){ c = view; }
+  else {
+    const {img} = compute(false);
+    c.width = img.w; c.height = img.h;
+    c.getContext('2d').putImageData(new ImageData(img.data, img.w, img.h), 0, 0);
+  }
+  c.toBlob(b => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = `${S.name}-${c.width}x${c.height}.png`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }, 'image/png');
+};
+
+/* ---------- Sample image: a coastal scene with lots of empty sky and sea ---------- */
+$('#sampleBtn').onclick = () => {
+  const c = document.createElement('canvas'), w = 1000, h = 600; c.width = w; c.height = h;
+  const x = c.getContext('2d');
+  let g = x.createLinearGradient(0, 0, 0, 360); g.addColorStop(0, '#2d6fb3'); g.addColorStop(1, '#f3c58a');
+  x.fillStyle = g; x.fillRect(0, 0, w, 360);
+  x.fillStyle = '#ffe9a8'; x.beginPath(); x.arc(780, 250, 46, 0, 7); x.fill();
+  g = x.createLinearGradient(0, 360, 0, h); g.addColorStop(0, '#1f5c86'); g.addColorStop(1, '#0d2f4a');
+  x.fillStyle = g; x.fillRect(0, 360, w, h-360);
+  x.fillStyle = '#2f4a3a'; x.beginPath(); x.moveTo(0, 360); x.lineTo(70, 300); x.lineTo(150, 330); x.lineTo(230, 280); x.lineTo(300, 360); x.fill();
+  x.fillStyle = '#4b3b2f'; x.fillRect(0, 352, 330, 12);
+  x.fillStyle = '#f4f1ea'; x.beginPath(); x.moveTo(170, 352); x.lineTo(186, 190); x.lineTo(214, 190); x.lineTo(230, 352); x.fill();
+  x.fillStyle = '#c43d2c'; [230, 290].forEach(y => x.fillRect(176, y, 48, 20));
+  x.fillStyle = '#333'; x.fillRect(182, 170, 36, 22); x.fillStyle = '#ffd34d'; x.fillRect(188, 174, 24, 14);
+  x.fillStyle = '#6b3d22'; x.beginPath(); x.moveTo(560, 450); x.lineTo(680, 450); x.lineTo(660, 475); x.lineTo(580, 475); x.fill();
+  x.fillStyle = '#fafafa'; x.beginPath(); x.moveTo(618, 445); x.lineTo(618, 330); x.lineTo(670, 445); x.fill();
+  x.beginPath(); x.moveTo(612, 445); x.lineTo(612, 350); x.lineTo(575, 445); x.fill();
+  x.strokeStyle = 'rgba(255,255,255,.25)'; x.lineWidth = 2;
+  for (let i=0; i<18; i++){ const yy = 390 + i*12, xx = (i*137) % w; x.beginPath(); x.moveTo(xx, yy); x.lineTo(xx+60, yy); x.stroke(); }
+  x.strokeStyle = '#1c2a38'; x.lineWidth = 2.5;
+  [[420,120],[455,140],[480,110]].forEach(([bx,by]) => { x.beginPath(); x.moveTo(bx-10,by); x.quadraticCurveTo(bx-5,by-7,bx,by); x.quadraticCurveTo(bx+5,by-7,bx+10,by); x.stroke(); });
+  setImage(c, 'sample');
+};
+</script>
+</body>
+</html>
