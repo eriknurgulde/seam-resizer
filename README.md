@@ -13,6 +13,7 @@ It's a single HTML file that runs entirely in your web browser. There's nothing 
 | Feature | What it means |
 |---|---|
 | **Resize (shrink & enlarge)** | Drag the Width and Height sliders from 20% to 180%. It removes or duplicates the least important lines of pixels ("seams"), so people and objects aren't squashed or stretched. |
+| **Exact size** | Type the width and height in pixels (or how many pixels to add in Extend side) instead of dragging. |
 | **Lock proportions** | Width and height change together, so the picture keeps its shape. |
 | **Extend side** | Grow the picture on one side only (left, right, top or bottom). Everything else stays exactly where it was. |
 | **Crop** | Drag a box with handles. Presets: Free, Original, 1:1, 4:5, 4:3, 3:2, 16:9, 9:16, or type an exact size. |
@@ -53,8 +54,8 @@ Don't move the folder after creating the shortcut. If you do, run `install-short
 1. **Load a picture:** click **Open image…**, drag a file onto the page, paste one with **Ctrl+V**, or click **Try a sample**.
 2. **Wait a few seconds** while the orange bars under the sliders fill up. This is the analysis. You can drag before it finishes; the slider just catches up.
 3. Pick a mode at the top of the **Size** section:
-   - **Resize:** drag **Width** and **Height**. Left shrinks, right enlarges.
-   - **Extend side:** pick a side, then drag **Add**. **Fill from the outer…** sets how wide the edge area is that gets stretched. Make it larger to add more, or smaller if something near the edge gets stretched.
+   - **Resize:** drag **Width** and **Height** (left shrinks, right enlarges), or type exact pixels in the **Exact size** boxes and press Enter.
+   - **Extend side:** pick a side, then drag **Add** or type the number of pixels to add. **Fill from the outer…** sets how wide the edge area is that gets stretched. Make it larger to add more, or smaller if something near the edge gets stretched.
    - **Crop:** drag the box or its handles, or pick a ratio, then click **Apply crop** (or press Enter).
 4. **If something gets distorted:** under **Mark areas**, choose **Protect**, paint over it, and click **Done marking**.
 5. **Download PNG** saves the result.

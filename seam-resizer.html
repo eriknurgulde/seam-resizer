@@ -134,6 +134,12 @@ main.drag #empty{border-color:var(--accent)}
       <label class="sl"><div class="top">Height <span id="hVal">–</span></div>
         <input id="hS" type="range" disabled></label>
       <div class="prog" title="Height analysis"><i id="hProg"></i></div>
+      <label class="sl"><div class="top">Exact size</div>
+        <div class="nums">
+          <input id="nW" type="number" step="1" aria-label="Width in pixels"> <span>×</span>
+          <input id="nH" type="number" step="1" aria-label="Height in pixels"> <span>px</span>
+        </div>
+      </label>
       <label class="chk"><input type="checkbox" id="lockChk"> Lock proportions</label>
       <p class="hint">Drag left to shrink, right to enlarge (up to 180%). Enlarging stretches the plain areas and leaves the objects as they are.</p>
       <div class="row">
@@ -151,6 +157,9 @@ main.drag #empty{border-color:var(--accent)}
       </div>
       <label class="sl"><div class="top">Add <span id="eVal">0 px</span></div>
         <input id="eS" type="range" min="0" max="1" value="0"></label>
+      <div class="nums">
+        <input id="nE" type="number" step="1" min="0" aria-label="Pixels to add"> <span>px to add</span>
+      </div>
       <div class="prog" title="Edge analysis"><i id="eProg"></i></div>
       <label class="sl"><div class="top">Fill from the outer <span id="bandVal">35%</span></div>
         <input id="bandS" type="range" min="10" max="60" value="35"></label>
@@ -559,6 +568,12 @@ function updateLabels(w, h, note){
   $('#wVal').textContent = pctLabel(+wS.value, o.w);
   $('#hVal').textContent = pctLabel(+hS.value, o.h);
   $('#eVal').textContent = `${+eS.value} px`;
+  // keep the typed-size boxes in sync with the sliders (but don't overwrite while typing)
+  const syncNum = (id, slider) => {
+    const el = $(id); el.min = slider.min; el.max = slider.max;
+    if (document.activeElement !== el) el.value = slider.value;
+  };
+  syncNum('#nW', wS); syncNum('#nH', hS); syncNum('#nE', eS);
   $('#bandVal').textContent = S.band + '%';
   $('#badge').textContent = `${o.w} × ${o.h}  →  ${w} × ${h}`;
   $('#wProg').style.width = (S.wMax ? S.wDone/S.wMax*100 : 0) + '%';
@@ -588,6 +603,28 @@ hS.addEventListener('input', () => {
 });
 $('#lockChk').onchange = e => { if (e.target.checked && S.orig){ hS.value = Math.round(S.orig.h * +wS.value / S.orig.w); render(); } };
 eS.addEventListener('input', render);
+
+/* Typed sizes: applied on Enter or when leaving the box; values outside the range are clamped. */
+function typedSize(input, slider, onSet){
+  const apply = () => {
+    if (!S.orig || input.value === '') { input.value = slider.value; return; }
+    const v = Math.round(+input.value), lo = +slider.min, hi = +slider.max, c = clamp(v, lo, hi);
+    slider.value = c; input.value = c;
+    stopAnim(); onSet(); render();
+    if (c !== v) $('#status').textContent = `Limited to ${lo}–${hi} px for this image.`;
+  };
+  input.addEventListener('change', apply);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter'){ apply(); input.select(); } });
+}
+typedSize($('#nW'), wS, () => {
+  S.last = 'w';
+  if ($('#lockChk').checked) hS.value = Math.round(S.orig.h * +wS.value / S.orig.w);
+});
+typedSize($('#nH'), hS, () => {
+  if ($('#lockChk').checked){ S.last = 'w'; wS.value = Math.round(S.orig.w * +hS.value / S.orig.h); }
+  else S.last = 'h';
+});
+typedSize($('#nE'), eS, () => {});
 bandS.addEventListener('input', () => { S.band = +bandS.value; updateLabels(view.width, view.height, 'Release to re-analyze…'); });
 bandS.addEventListener('change', () => { if (S.orig) { startExtend(); render(); } });
 $('#modeSeg').onclick = e => {
